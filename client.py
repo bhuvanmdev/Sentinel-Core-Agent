@@ -1,47 +1,3 @@
-# from mcp import ClientSession, StdioServerParameters, types
-# from mcp.client.stdio import stdio_client
-
-# # Create server parameters for stdio connection
-# server_params = StdioServerParameters(
-#     command="python",  # Executable
-#     args=["server.py"],  
-#     env=None,
-# )
-
-
-
-
-# async def run():
-#     async with stdio_client(server_params) as (read, write):
-#         async with ClientSession(
-#             read, write
-#         ) as session:
-#             # Initialize the connection
-#             await session.initialize()
-
-#             # List available prompts
-#             prompts = await session.list_prompts()
-
-#             # # Get a prompt
-#             # prompt = await session.get_prompt(
-#             #     "example-prompt", arguments={"arg1": "value"}
-#             # )
-#             j = await session.read_resource("greeting://John")
-#             print(j)
-#             # List available resources
-#             resources = await session.list_resources()
-
-#             # List available tools
-#             tools = await session.list_tools()
-#             print(f"Available tools: {tools} \n available resources: {resources} aavailable prompts: {prompts}")
-#             # Read a resource
-#             # content, mime_type = await session.read_resource("file://some/path")
-
-#             # Call a tool
-#             result = await session.call_tool("add", arguments={"a": 1, "b": 2})
-#             print(f"Result of calling 'add': {result}")
-
-
 import asyncio
 import json
 import logging
@@ -170,6 +126,29 @@ class Server:
                     tools.append(Tool(tool.name, tool.description, tool.inputSchema))###
 
         return tools
+    
+    async def list_resource_templates(self) -> list[Any]:
+        """List available resources from the server.
+
+        Returns:
+            A list of available resources.
+
+        Raises:
+            RuntimeError: If the server is not initialized.
+        """
+        if not self.session:
+            raise RuntimeError(f"Server {self.name} not initialized")
+
+        resources_response = await self.session.list_resource_templates()
+        logging.info(f"Resources response: {resources_response}")
+        resources = []
+
+        for item in resources_response:
+            if isinstance(item, tuple) and item[0] == "resources":
+                for resource in item[1]:
+                    resources.append(Resource_template(resource.name, resource.description, resource.uri, resource.mimeType))
+
+        return resources
 
     async def execute_tool(
         self,
@@ -260,11 +239,32 @@ Arguments:
 {chr(10).join(args_desc)}
 """
 
+class Resource_template:
+    """Represents a resource with its properties and formatting."""
+
+    def __init__(self, name: str, description: str, uri: str, mimetype: str) -> None:
+        self.name: str = name
+        self.description: str = description
+        self.uri: str = uri
+        self.mimetype: str = mimetype
+    
+    def format_for_llm(self) -> str:
+        """Format resource information for LLM.
+
+        Returns:
+            A formatted string describing the resource.
+        """
+        return f"""
+Resource: {self.name}
+Description: {self.description}
+URI: {self.uri}
+MIME Type: {self.mimetype}
+"""
 
 class LLMClient:
     """Manages communication with the LLM provider."""
 
-    def __init__(self, api_key: str, model: str = "gpt") -> None:
+    def __init__(self, api_key: str, model: str = "gemini") -> None:
         self.api_key: str = api_key
         self.model = model
         if model == "gpt":
@@ -272,12 +272,24 @@ class LLMClient:
             self.llm = AzureChatOpenAI(
                 azure_deployment="gpt-4o",
                 api_version=os.environ["OPENAI_API_VERSION"],
-                temperature=0.1,
+                temperature=1,
                 max_tokens=None,
                 timeout=None,
                 max_retries=2,
                 api_key=api_key,
                 # top_p=0.85,
+            )
+        elif model == "gemini":
+                api_key = os.environ.get("GKEY",api_key)
+                from langchain_google_genai import ChatGoogleGenerativeAI
+                self.llm = ChatGoogleGenerativeAI(
+                    model="gemini-2.0-flash",
+                    google_api_key=api_key,
+                    temperature=1,
+                    max_tokens=None,
+                    timeout=None,
+                    max_retries=2,
+                    # top_p=0.85,
             )
 
     def get_response(self, messages: list[dict[str, str]]) -> str:
@@ -290,9 +302,9 @@ class LLMClient:
             The LLM's response as a string.
 
         """
-        if self.model == "gpt":
-            res = self.llm.invoke(messages)
-            return res.content
+        res = self.llm.invoke(messages)
+        return res.content
+
 
 
 
@@ -373,14 +385,20 @@ class ChatSession:
                     return
 
             all_tools = []
+            all_resources = []
+
             for server in self.servers:
                 tools = await server.list_tools()
+                resources = await server.list_resource_templates()
+                all_resources.extend(resources)
                 all_tools.extend(tools)
-
+            print(f"Available tools: {all_tools} \n available resources: {all_resources}")
             tools_description = "\n".join([tool.format_for_llm() for tool in all_tools])
+            resources_description = "\n".join([resource.format_for_llm() for resource in all_resources])
+
 
             system_message = (
-                "You are a helpful assistant with access to these tools:\n\n"
+                "You are a helpful assistant with access to these tools and resources:\n\n"
                 f"{tools_description}\n"
                 "Choose the appropriate tool based on the user's question. "
                 "If no tool is needed, reply directly.\n\n"
@@ -400,9 +418,8 @@ class ChatSession:
                 "5. Avoid simply repeating the raw data\n\n"
                 "Please use only the tools that are explicitly defined above."
             )
-
-            # messages = [{"role": "system", "content": system_message}]
             from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+            messages = [AIMessage(content=system_message)]
             messages = [SystemMessage(content=system_message)]
             while True:
                 try:
@@ -453,8 +470,3 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-# if __name__ == "__main__":
-#     import asyncio
-
-#     asyncio.run(run())

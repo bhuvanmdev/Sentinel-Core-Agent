@@ -140,7 +140,7 @@ class Server:
             raise RuntimeError(f"Server {self.name} not initialized")
 
         resources_response = await self.session.list_resource_templates()
-        logging.info(f"Resources response: {resources_response}")
+        
         resources = []
 
         for item in resources_response:
@@ -187,6 +187,45 @@ class Server:
                 attempt += 1
                 logging.warning(
                     f"Error executing tool: {e}. Attempt {attempt} of {retries}."
+                )
+                if attempt < retries:
+                    logging.info(f"Retrying in {delay} seconds...")
+                    await asyncio.sleep(delay)
+                else:
+                    logging.error("Max retries reached. Failing.")
+                    raise
+    async def get_resource(
+        self, resource_name: str, retries: int = 2, delay: float = 1.0
+    ) -> Any:
+        """Get a resource with retry mechanism.
+
+        Args:
+            resource_name: Name of the resource to get.
+            retries: Number of retry attempts.
+            delay: Delay between retries in seconds.
+
+        Returns:
+            Resource result.
+
+        Raises:
+            RuntimeError: If server is not initialized.
+            Exception: If resource retrieval fails after all retries.
+        """
+        if not self.session:
+            raise RuntimeError(f"Server {self.name} not initialized")
+
+        attempt = 0
+        while attempt < retries:
+            try:
+                logging.info(f"Getting {resource_name}...")
+                result = await self.session.read_resource(resource_name)
+
+                return result
+
+            except Exception as e:
+                attempt += 1
+                logging.warning(
+                    f"Error getting resource: {e}. Attempt {attempt} of {retries}."
                 )
                 if attempt < retries:
                     logging.info(f"Retrying in {delay} seconds...")
@@ -347,6 +386,7 @@ class ChatSession:
 
                 for server in self.servers:
                     tools = await server.list_tools()
+                    resource = await server.list_resource_templates()
                     if any(tool.name == tool_call["tool"] for tool in tools):
                         try:
                             result = await server.execute_tool(
@@ -367,7 +407,16 @@ class ChatSession:
                             error_msg = f"Error executing tool: {str(e)}"
                             logging.error(error_msg)
                             return error_msg
-
+                    elif any(resource.name == tool_call["Resource"] for resource in resource):
+                        try:
+                            result = await server.get_resource(
+                                tool_call["uri"]
+                            )
+                            return f"Resource retrieval result: {result}"
+                        except Exception as e:
+                            error_msg = f"Error retrieving resource: {str(e)}"
+                            logging.error(error_msg)
+                            return error_msg
                 return f"No server found with tool: {tool_call['tool']}"
             return llm_response
         except json.JSONDecodeError:
@@ -392,34 +441,132 @@ class ChatSession:
                 resources = await server.list_resource_templates()
                 all_resources.extend(resources)
                 all_tools.extend(tools)
-            print(f"Available tools: {all_tools} \n available resources: {all_resources}")
             tools_description = "\n".join([tool.format_for_llm() for tool in all_tools])
             resources_description = "\n".join([resource.format_for_llm() for resource in all_resources])
 
 
-            system_message = (
-                "You are a helpful assistant with access to these tools and resources:\n\n"
-                f"{tools_description}\n"
-                "Choose the appropriate tool based on the user's question. "
-                "If no tool is needed, reply directly.\n\n"
-                "IMPORTANT: When you need to use a tool, you must ONLY respond with "
-                "the exact JSON object format below, nothing else:\n"
-                "{\n"
-                '    "tool": "tool-name",\n'
-                '    "arguments": {\n'
-                '        "argument-name": "value"\n'
-                "    }\n"
-                "}\n\n"
-                "After receiving a tool's response:\n"
-                "1. Transform the raw data into a natural, conversational response\n"
-                "2. Keep responses concise but informative\n"
-                "3. Focus on the most relevant information\n"
-                "4. Use appropriate context from the user's question\n"
-                "5. Avoid simply repeating the raw data\n\n"
-                "Please use only the tools that are explicitly defined above."
-            )
+            # system_message = (
+            #     "You are a helpful assistant with access to these tools and resources:\n\n"
+            #     "tools:\n"
+            #     f"{tools_description}\n\n"
+            #     "resources:\n"
+            #     f"{resources_description}\n\n"
+            #     "Choose the appropriate tool\\resource based on the user's question. "
+            #     "If no tool\\resource is needed, reply directly.\n\n"
+            #     "IMPORTANT: When you need to use a tool\\resourcse, you must ONLY respond with "
+            #     "the exact JSON object format below, nothing else:\n"
+            #     "for tools:\n"
+            #     "{\n"
+            #     '    "tool": "tool-name",\n'
+            #     '    "arguments": {\n'
+            #     '        "argument-name": "value"\n'
+            #     "    }\n"
+            #     "}\n\n"
+            #     "\n"
+            #     "for resources-template:\n"
+            #     "{\n"
+            #     '    "Resource": "resource-name"\n'
+            #     '    "uri": "<protocol>://<data-to-be-sent>"\n'
+            #     "    }\n"
+            #     "}\n\n"
+            #     "Also remember, protocol can be anything, from greeting:// to http://\n\n"
+            #     "After receiving a tool's\\resour response:\n"
+            #     "1. Transform the raw data into a natural, conversational response\n"
+            #     "2. Keep responses concise but informative\n"
+            #     "3. Focus on the most relevant information\n"
+            #     "4. Use appropriate context from the user's question\n"
+            #     "5. Avoid simply repeating the raw data\n\n"
+            #     "Please use only the tools that are explicitly defined above."
+            # )
+
+            system_message = """
+You are a helpful assistant with access to tools and resources. Your primary goal is to assist the user by answering their questions or completing their requests.  You **MUST** prioritize using available tools and resources before attempting to answer directly.
+
+**Tools & Resources:**
+
+*   **Tools:**
+    {tools_description}
+
+*   **Resources:**
+    {resources_description}
+
+**Workflow:**
+
+1.  **Analyze User Request:** Carefully understand the user's request and identify any actions required to fulfill it.
+2.  **Resource/Tool Availability Check:** BEFORE attempting to answer directly, meticulously examine the `tools` and `resources` descriptions provided.
+3.  **Resource Prioritization:** If a `resource` is available that can directly address the user's need, **YOU MUST USE IT FIRST.** Resources are preferred over tools.
+4.  **Tool Usage (If No Resource Available):** If no suitable `resource` exists, then check if a `tool` can perform the necessary action.
+5.  **Direct Response (Only as Last Resort):**  Only respond directly if **absolutely no suitable `tool` or `resource`** is available.
+
+**Response Format (when using a Tool or Resource):**
+
+You **MUST** respond with the exact JSON object format below, and **nothing else**, when utilizing a `tool` or `resource`. This is critical for proper system functionality.
+
+*   **For Tools:**
+
+```json
+{
+    "tool": "tool-name",
+    "arguments": {
+        "argument-name": "value"
+    }
+}
+```
+
+*   **For Resources:**
+
+```json
+{
+    "Resource": "resource-name",
+    "uri": "<protocol>://<data-to-be-sent>"
+}
+```
+
+**Important Notes about the JSON Format:**
+
+*   The JSON object **MUST** be well-formed and valid.
+*   The `"tool"` or `"Resource"` field must exactly match the name listed in the `tools_description` or `resources_description`.
+*   The `"arguments"` field in the `tool` object **MUST** include all required arguments as defined in the `tools_description` and their corresponding values.
+*   The `"uri"` field in the `Resource` object is a Uniform Resource Identifier. The `<protocol>` can be anything appropriate (e.g., `http`, `https`, `greeting`, `data`, etc.), and `<data-to-be-sent>` represents the data you need to send to the resource.
+
+**Example (Resource):**
+
+```json
+{
+    "Resource": "weather-api",
+    "uri": "http://api.example.com/weather?city=London"
+}
+```
+
+**Example (Tool):**
+
+```json
+{
+    "tool": "calculator",
+    "arguments": {
+        "expression": "2 + 2"
+    }
+}
+```
+
+**After Receiving a Tool/Resource Response (and only after receiving a response from the tool or resource):**
+
+1.  **Transform Data:** Process the raw data returned by the tool or resource and convert it into a natural, conversational response that is easy for the user to understand.
+2.  **Conciseness:** Keep your responses concise but informative.
+3.  **Relevance:** Focus on providing the most relevant information to the user's original question.
+4.  **Contextualization:** Use appropriate context from the user's question to frame your response.
+5.  **Avoid Repetition:**  Do not simply repeat the raw data returned by the tool or resource.  Summarize and explain it.
+
+**Key Principles:**
+
+*   **Prioritize Resources over Tools:** Always use a resource if it can fulfill the request.
+*   **Adhere to JSON Format:**  Strictly follow the specified JSON format when calling tools or resources.
+*   **Only Use Defined Tools/Resources:**  Do not attempt to use any tools or resources that are not explicitly listed in the descriptions.
+*   **Clear and Concise Responses:** Provide clear, concise, and helpful responses to the user after receiving data from a tool or resource.
+"""
+
             from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
-            messages = [AIMessage(content=system_message)]
+            # messages = [AIMessage(content=system_message)]
             messages = [SystemMessage(content=system_message)]
             while True:
                 try:

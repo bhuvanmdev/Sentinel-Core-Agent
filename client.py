@@ -5,7 +5,7 @@ import os
 import shutil
 from contextlib import AsyncExitStack
 from typing import Any
-
+import re
 import httpx
 from dotenv import load_dotenv
 from mcp import ClientSession, StdioServerParameters
@@ -140,13 +140,14 @@ class Server:
             raise RuntimeError(f"Server {self.name} not initialized")
 
         resources_response = await self.session.list_resource_templates()
-        
+        # logging.info(resources_response)
         resources = []
 
         for item in resources_response:
-            if isinstance(item, tuple) and item[0] == "resources":
+            # logging.info(item)
+            if isinstance(item, tuple) and item[0] == "resourceTemplates":
                 for resource in item[1]:
-                    resources.append(Resource_template(resource.name, resource.description, resource.uri, resource.mimeType))
+                    resources.append(Resource_template(resource.name, resource.description, resource.uriTemplate, resource.mimeType))
 
         return resources
 
@@ -270,7 +271,7 @@ class Tool:
                 if param_name in self.input_schema.get("required", []):
                     arg_desc += " (required)"
                 args_desc.append(arg_desc)
-
+            # args.desc.append("- id: "
         return f"""
 Tool: {self.name}
 Description: {self.description}
@@ -293,6 +294,7 @@ class Resource_template:
         Returns:
             A formatted string describing the resource.
         """
+        logging.info(f"Resource: {self.name}, Description: {self.description}, URI: {self.uri}, MIME Type: {self.mimetype}")
         return f"""
 Resource: {self.name}
 Description: {self.description}
@@ -303,7 +305,7 @@ MIME Type: {self.mimetype}
 class LLMClient:
     """Manages communication with the LLM provider."""
 
-    def __init__(self, api_key: str, model: str = "gemini") -> None:
+    def __init__(self, api_key: str, model: str = "gpt") -> None:
         self.api_key: str = api_key
         self.model = model
         if model == "gpt":
@@ -312,7 +314,7 @@ class LLMClient:
                 azure_deployment="gpt-4o",
                 api_version=os.environ["OPENAI_API_VERSION"],
                 temperature=1,
-                max_tokens=None,
+                max_tokens=2**9,
                 timeout=None,
                 max_retries=2,
                 api_key=api_key,
@@ -322,16 +324,16 @@ class LLMClient:
                 api_key = os.environ.get("GKEY",api_key)
                 from langchain_google_genai import ChatGoogleGenerativeAI
                 self.llm = ChatGoogleGenerativeAI(
-                    model="gemini-2.0-flash",
+                    model="Gemini 2.0 Flash",
                     google_api_key=api_key,
-                    temperature=1,
+                    temperature=0.5,
                     max_tokens=None,
                     timeout=None,
                     max_retries=2,
                     # top_p=0.85,
             )
 
-    def get_response(self, messages: list[dict[str, str]]) -> str:
+    async def get_response(self, messages: list[dict[str, str]]) -> str:
         """Get a response from the LLM.
 
         Args:
@@ -341,7 +343,7 @@ class LLMClient:
             The LLM's response as a string.
 
         """
-        res = self.llm.invoke(messages)
+        res = await self.llm.ainvoke(messages)
         return res.content
 
 
@@ -379,48 +381,53 @@ class ChatSession:
         import json
 
         try:
+            # pattern to match the JSON object given by the LLM in ```json\n<json-object>\n``` format
+            pattern = r"```json\n(.*?)\n```"
+            match = re.search(pattern, llm_response, re.DOTALL)
+            if match:
+                llm_response = match.group(1).strip()
+            logging.info(f"json {llm_response}")
             tool_call = json.loads(llm_response)
-            if "tool" in tool_call and "arguments" in tool_call:
-                logging.info(f"Executing tool: {tool_call['tool']}")
-                logging.info(f"With arguments: {tool_call['arguments']}")
+                # logging.info(f"Executing tool: {tool_call['tool']}")
+                # logging.info(f"With arguments: {tool_call['arguments']}")
 
-                for server in self.servers:
-                    tools = await server.list_tools()
-                    resource = await server.list_resource_templates()
-                    if any(tool.name == tool_call["tool"] for tool in tools):
-                        try:
-                            result = await server.execute_tool(
-                                tool_call["tool"], tool_call["arguments"]
+            for server in self.servers:
+                tools = await server.list_tools()
+                resource = await server.list_resource_templates()
+                if ("tool" in tool_call and "arguments" in tool_call) and any(tool.name == tool_call["tool"] for tool in tools):
+                    try:
+                        result = await server.execute_tool(
+                            tool_call["tool"], tool_call["arguments"]
+                        )
+
+                        if isinstance(result, dict) and "progress" in result:
+                            progress = result["progress"]
+                            total = result["total"]
+                            percentage = (progress / total) * 100
+                            logging.info(
+                                f"Progress: {progress}/{total} "
+                                f"({percentage:.1f}%)"
                             )
 
-                            if isinstance(result, dict) and "progress" in result:
-                                progress = result["progress"]
-                                total = result["total"]
-                                percentage = (progress / total) * 100
-                                logging.info(
-                                    f"Progress: {progress}/{total} "
-                                    f"({percentage:.1f}%)"
-                                )
-
-                            return f"Tool execution result: {result}"
-                        except Exception as e:
-                            error_msg = f"Error executing tool: {str(e)}"
-                            logging.error(error_msg)
-                            return error_msg
-                    elif any(resource.name == tool_call["Resource"] for resource in resource):
-                        try:
-                            result = await server.get_resource(
-                                tool_call["uri"]
-                            )
-                            return f"Resource retrieval result: {result}"
-                        except Exception as e:
-                            error_msg = f"Error retrieving resource: {str(e)}"
-                            logging.error(error_msg)
-                            return error_msg
+                        return f"Tool execution result: {result}"
+                    except Exception as e:
+                        error_msg = f"Error executing tool: {str(e)}"
+                        logging.error(error_msg)
+                        return error_msg
+                elif ("Resource" in tool_call and "uri" in tool_call) and any(resource.name == tool_call["Resource"] for resource in resource):
+                    try:
+                        result = await server.get_resource(
+                            tool_call["uri"]
+                        )
+                        return f"Resource retrieval result: {result}"
+                    except Exception as e:
+                        error_msg = f"Error retrieving resource: {str(e)}"
+                        logging.error(error_msg)
+                        return error_msg
                 return f"No server found with tool: {tool_call['tool']}"
             return llm_response
         except json.JSONDecodeError:
-            return llm_response
+            raise llm_response
 
     async def start(self) -> None:
         """Main chat session handler."""
@@ -439,9 +446,11 @@ class ChatSession:
             for server in self.servers:
                 tools = await server.list_tools()
                 resources = await server.list_resource_templates()
+                # logging.info(all_resources)
                 all_resources.extend(resources)
                 all_tools.extend(tools)
             tools_description = "\n".join([tool.format_for_llm() for tool in all_tools])
+            
             resources_description = "\n".join([resource.format_for_llm() for resource in all_resources])
 
 
@@ -478,31 +487,31 @@ class ChatSession:
             #     "5. Avoid simply repeating the raw data\n\n"
             #     "Please use only the tools that are explicitly defined above."
             # )
+            # logging.info(resources_description)
+            system_message = f"""
+You are a helpful assistant with access to tools and resources. Your primary goal is to assist the user by answering their questions or completing their requests.  You MUST prioritize using available tools and resources before attempting to answer directly.
 
-            system_message = """
-You are a helpful assistant with access to tools and resources. Your primary goal is to assist the user by answering their questions or completing their requests.  You **MUST** prioritize using available tools and resources before attempting to answer directly.
+Tools & Resources:
 
-**Tools & Resources:**
+Tools:
+{tools_description}
 
-*   **Tools:**
-    {tools_description}
+Resources:
+{resources_description}
+"""+r"""
+Workflow:
 
-*   **Resources:**
-    {resources_description}
+1.  Analyze User Request: Carefully understand the user's request and identify any actions required to fulfill it.
+2.  Resource/Tool Availability Check: BEFORE attempting to answer directly, meticulously examine the `tools` and `resources` descriptions provided.
+3.  Resource Prioritization: If a `resource` is available that can directly address the user's need, YOU MUST USE IT FIRST. Resources are preferred over tools.
+4.  Tool Usage (If No Resource Available): If no suitable `resource` exists, then check if a `tool` can perform the necessary action.
+5.  Direct Response (Only as Last Resort):  Only respond directly if ABSOLUTELY NO SUITABLE `TOOL` OR `RESOURCE` is available.
 
-**Workflow:**
+Response Format (when using a Tool or Resource):
 
-1.  **Analyze User Request:** Carefully understand the user's request and identify any actions required to fulfill it.
-2.  **Resource/Tool Availability Check:** BEFORE attempting to answer directly, meticulously examine the `tools` and `resources` descriptions provided.
-3.  **Resource Prioritization:** If a `resource` is available that can directly address the user's need, **YOU MUST USE IT FIRST.** Resources are preferred over tools.
-4.  **Tool Usage (If No Resource Available):** If no suitable `resource` exists, then check if a `tool` can perform the necessary action.
-5.  **Direct Response (Only as Last Resort):**  Only respond directly if **absolutely no suitable `tool` or `resource`** is available.
+You MUST respond with the exact JSON object format below, and NOTHING ELSE, when utilizing a `tool` or `resource`. This is critical for proper system functionality.
 
-**Response Format (when using a Tool or Resource):**
-
-You **MUST** respond with the exact JSON object format below, and **nothing else**, when utilizing a `tool` or `resource`. This is critical for proper system functionality.
-
-*   **For Tools:**
+For Tools:
 
 ```json
 {
@@ -513,7 +522,7 @@ You **MUST** respond with the exact JSON object format below, and **nothing else
 }
 ```
 
-*   **For Resources:**
+For Resources:
 
 ```json
 {
@@ -522,50 +531,33 @@ You **MUST** respond with the exact JSON object format below, and **nothing else
 }
 ```
 
-**Important Notes about the JSON Format:**
+Important Notes about the JSON Format:
 
-*   The JSON object **MUST** be well-formed and valid.
+*   The JSON object MUST be well-formed and valid.
 *   The `"tool"` or `"Resource"` field must exactly match the name listed in the `tools_description` or `resources_description`.
-*   The `"arguments"` field in the `tool` object **MUST** include all required arguments as defined in the `tools_description` and their corresponding values.
+*   The `"arguments"` field in the `tool` object MUST include all required arguments as defined in the `tools_description` and their corresponding values.
 *   The `"uri"` field in the `Resource` object is a Uniform Resource Identifier. The `<protocol>` can be anything appropriate (e.g., `http`, `https`, `greeting`, `data`, etc.), and `<data-to-be-sent>` represents the data you need to send to the resource.
 
-**Example (Resource):**
+After Receiving a Tool/Resource Response (and ONLY AFTER receiving a response from the tool or resource) from the user:
+1.  Process the raw data returned by the tool or resource from a user and convert it into a natural, conversational response that is easy for the user to understand.
+2.  Keep your responses concise but informative.
+3.  Use appropriate context from the user's question(i.e question that led to tool calling) to frame your response.
+4.  DO NOT SIMPLY REPEAT THE RAW JSON DATA ONCE YOU GET THE TOOL RESPONSE IN THE FORM OF "Tool execution result: meta=... content=[TextContent(type='...', text='...', annotations=...)] isError=...". Instead, focus on the most relevant information and present it in a user-friendly manner.
 
-```json
+Conversation example
+
+user: "Can you give me a list of all files in the C: drive?"
+assistant:```json
 {
-    "Resource": "weather-api",
-    "uri": "http://api.example.com/weather?city=London"
+    "Resource": "resource-name",
+    "uri": "<protocol>://<data-to-be-sent>"
 }
 ```
-
-**Example (Tool):**
-
-```json
-{
-    "tool": "calculator",
-    "arguments": {
-        "expression": "2 + 2"
-    }
-}
-```
-
-**After Receiving a Tool/Resource Response (and only after receiving a response from the tool or resource):**
-
-1.  **Transform Data:** Process the raw data returned by the tool or resource and convert it into a natural, conversational response that is easy for the user to understand.
-2.  **Conciseness:** Keep your responses concise but informative.
-3.  **Relevance:** Focus on providing the most relevant information to the user's original question.
-4.  **Contextualization:** Use appropriate context from the user's question to frame your response.
-5.  **Avoid Repetition:**  Do not simply repeat the raw data returned by the tool or resource.  Summarize and explain it.
-
-**Key Principles:**
-
-*   **Prioritize Resources over Tools:** Always use a resource if it can fulfill the request.
-*   **Adhere to JSON Format:**  Strictly follow the specified JSON format when calling tools or resources.
-*   **Only Use Defined Tools/Resources:**  Do not attempt to use any tools or resources that are not explicitly listed in the descriptions.
-*   **Clear and Concise Responses:** Provide clear, concise, and helpful responses to the user after receiving data from a tool or resource.
+user: Resource retrieval result: ...
+AI: "Here is the list of files in the C: drive: ..."
 """
 
-            from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+            from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
             # messages = [AIMessage(content=system_message)]
             messages = [SystemMessage(content=system_message)]
             while True:
@@ -577,20 +569,26 @@ You **MUST** respond with the exact JSON object format below, and **nothing else
 
                     messages.append(HumanMessage(content=user_input))
 
-                    llm_response = self.llm_client.get_response(messages)
-                    logging.info("\nAssistant: %s", llm_response)
+                    llm_response = await self.llm_client.get_response(messages)
+                    # logging.info("\nAssistant: %s", llm_response)
 
                     result = await self.process_llm_response(llm_response)
-
+                    logging.info("\nAssistant_with_tools: %s", result)
                     if result != llm_response:
-                        messages.append(AIMessage(content=llm_response))
-                        messages.append(SystemMessage(content=result))
-
-                        final_response = self.llm_client.get_response(messages)
+                        # messages[-1] = AIMessage(content=llm_response)
+                        messages.append(HumanMessage(content=result))
+                        # messages.append(ToolMessage(content=result,))
+                        final_response = await self.llm_client.get_response(messages)
+                        pattern = r"```.*\n(.*?)\n```"
+                        match = re.search(pattern, final_response, re.DOTALL)
+                        # logging.info("\nFinal response after: %s", final_response)
+                        # if match:
+                        #     final_response = match.group(1).strip()
                         logging.info("\nFinal response: %s", final_response)
                         messages.append(
                             AIMessage(content=final_response)
                         )
+
                     else:
                         messages.append(AIMessage(content=llm_response))
 

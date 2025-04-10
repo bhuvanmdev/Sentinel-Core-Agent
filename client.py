@@ -324,7 +324,7 @@ class LLMClient:
                 api_key = os.environ.get("GKEY",api_key)
                 from langchain_google_genai import ChatGoogleGenerativeAI
                 self.llm = ChatGoogleGenerativeAI(
-                    model="Gemini 2.0 Flash",
+                    model="Gemini-2.0-Flash",
                     google_api_key=api_key,
                     temperature=0.5,
                     max_tokens=None,

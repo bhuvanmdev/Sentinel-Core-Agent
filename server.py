@@ -4,7 +4,7 @@ import requests
 from typing import Optional, Union
 
 
-mcp = FastMCP("DemoServer") # Good practice to give it a descriptive name
+mcp = FastMCP("Python Tools server") # Good practice to give it a descriptive name
 
 # Add an addition tool
 @mcp.tool()
@@ -42,13 +42,12 @@ def is_file_folder_present(file_folder_name: str, path: Optional[str] = None) ->
 
         
 @mcp.tool()
-def cur_time() -> str:
+def cur_datetimetime() -> str:
     """Get the current time"""
     from datetime import datetime
     now = datetime.now()
-    current_time = now.strftime("%H:%M:%S")
-    print(f"Current Time: {current_time}")
-    return current_time
+    # print(f"Current Time and date: {now}")
+    return now
 
 def braveai(query,temp=False,hash_=None,id_=None,ind=1):
     url_encoding = {
@@ -104,9 +103,9 @@ def braveai(query,temp=False,hash_=None,id_=None,ind=1):
         return output.replace('\\n','\n').replace('\\','')
 
 @mcp.tool()
-def aisearch(query: str) -> str:
-    """Search any query and obtain a response from another AI agent knowledgeable about the query."""
-    hash_,id_ = braveai(query,temp=True)
+def browser_ai_search(query: str) -> str:
+    """Search any query and obtain a response from another AI agent connected to the internet."""
+    hash_,id_ = braveai(".",temp=True)
     return braveai(query,temp=False,hash_=hash_,id_=id_)
 
 
@@ -125,7 +124,7 @@ def read_file(path: str) -> str:
     
 @mcp.tool()
 def write_file(path: str, content: str, binary_data: bool) -> str:
-    """Write both text and binary files"""
+    """Write both text and binary files."""
     try:
         if binary_data:
             with open(path, 'wb') as file:
@@ -137,6 +136,8 @@ def write_file(path: str, content: str, binary_data: bool) -> str:
             return f"File written to {path}"
     except Exception as e:
         return f"Error writing file: {e}"
+
+
 
 if __name__ == "__main__":
     print("Starting MCP Demo Server via stdio...")

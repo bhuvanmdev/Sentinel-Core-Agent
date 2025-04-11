@@ -382,18 +382,19 @@ class ChatSession:
 
         try:
             # pattern to match the JSON object given by the LLM in ```json\n<json-object>\n``` format
-            pattern = r"```json_tool\n(.*?)\n```"
-            match = re.search(pattern, llm_response, re.DOTALL)
-            if match:
-                llm_response = match.group(1).strip()
-            logging.info(f"json {llm_response}")
-            tool_call = json.loads(llm_response)
+            # pattern = r"```json_tool\n(.*?)\n```"
+            # match = re.search(pattern, llm_response, re.DOTALL)
+            # if match:
+            #     llm_response = match.group(1).strip()
+            # logging.info(f"json {llm_response}")
+
                 # logging.info(f"Executing tool: {tool_call['tool']}")
                 # logging.info(f"With arguments: {tool_call['arguments']}")
 
             for server in self.servers:
                 tools = await server.list_tools()
                 resource = await server.list_resource_templates()
+                tool_call = json.loads(llm_response.strip())
                 if ("tool" in tool_call and "arguments" in tool_call) and any(tool.name == tool_call["tool"] for tool in tools):
                     try:
                         result = await server.execute_tool(
@@ -427,7 +428,7 @@ class ChatSession:
                 return f"No server found with tool: {tool_call['tool']}"
             return llm_response
         except json.JSONDecodeError:
-            raise llm_response
+            return f"Error decoding JSON response: {llm_response}"  
 
     async def start(self) -> None:
         """Main chat session handler."""
@@ -465,53 +466,52 @@ class ChatSession:
             #     "IMPORTANT: When you need to use a tool\\resourcse, you must ONLY respond with "
             #     "the exact JSON object format below, nothing else:\n"
             #     "for tools:\n"
+            #     "```json_tool\n"
             #     "{\n"
             #     '    "tool": "tool-name",\n'
             #     '    "arguments": {\n'
             #     '        "argument-name": "value"\n'
             #     "    }\n"
-            #     "}\n\n"
+            #     "}```\n\n"
             #     "\n"
-            #     "for resources-template:\n"
-            #     "{\n"
-            #     '    "Resource": "resource-name"\n'
-            #     '    "uri": "<protocol>://<data-to-be-sent>"\n'
-            #     "    }\n"
-            #     "}\n\n"
-            #     "Also remember, protocol can be anything, from greeting:// to http://\n\n"
-            #     "After receiving a tool's\\resour response:\n"
+            #     # "for resources-template:\n"
+            #     # "{\n"
+            #     # '    "Resource": "resource-name"\n'
+            #     # '    "uri": "<protocol>://<data-to-be-sent>"\n'
+            #     # "    }\n"
+            #     # "}"
+            #     # "```\n\n"
+            #     # "Also remember, protocol can be anything, from greeting:// to http://\n\n"
+            #     # "After receiving a tool's\\resour response:\n"
             #     "1. Transform the raw data into a natural, conversational response\n"
             #     "2. Keep responses concise but informative\n"
             #     "3. Focus on the most relevant information\n"
             #     "4. Use appropriate context from the user's question\n"
             #     "5. Avoid simply repeating the raw data\n\n"
+            #     "6. When Using tools ALWAYS ENCLOSE THE JSON OBJECT IN ```json_tool\n<json-object>\n``` format\n\n."
             #     "Please use only the tools that are explicitly defined above."
             # )
             # logging.info(resources_description)
+# """Workflow:
+
+# 1.  Analyze User Request: Carefully understand the user's request and identify any actions required to fulfill it.
+# 2.  Resource/Tool Availability Check: BEFORE attempting to answer directly, meticulously examine the `tools` and `resources` descriptions provided.
+# 3.  Resource Prioritization: If a `resource` is available that can directly address the user's need, YOU MUST USE IT FIRST. Resources are preferred over tools.
+# 4.  Tool Usage (If No Resource Available): If no suitable `resource` exists, then check if a `tool` can perform the necessary action.
+# 5.  Direct Response (Only as Last Resort):  Only respond directly if ABSOLUTELY NO SUITABLE `TOOL` OR `RESOURCE` is available.
+
+
+# """
+
             system_message = f"""
 You are a helpful assistant with access to tools and resources. Your primary goal is to assist the user by answering their questions or completing their requests.  You MUST prioritize using available tools and resources before attempting to answer directly.
 
-Tools & Resources:
+Tools:
 
 Tools:
 {tools_description}
-
-Resources:
-{resources_description}
 """+r"""
-Workflow:
-
-1.  Analyze User Request: Carefully understand the user's request and identify any actions required to fulfill it.
-2.  Resource/Tool Availability Check: BEFORE attempting to answer directly, meticulously examine the `tools` and `resources` descriptions provided.
-3.  Resource Prioritization: If a `resource` is available that can directly address the user's need, YOU MUST USE IT FIRST. Resources are preferred over tools.
-4.  Tool Usage (If No Resource Available): If no suitable `resource` exists, then check if a `tool` can perform the necessary action.
-5.  Direct Response (Only as Last Resort):  Only respond directly if ABSOLUTELY NO SUITABLE `TOOL` OR `RESOURCE` is available.
-
-Response Format (when using a Tool or Resource):
-
-You MUST respond with the exact JSON object format below, and NOTHING ELSE, when utilizing a `tool` or `resource`. This is critical for proper system functionality.
-
-For Tools:
+For Tools, ALWAYS use the following format:
 
 ```json_tool
 {
@@ -521,40 +521,59 @@ For Tools:
     }
 }
 ```
-
-For Resources:
-
-```json_tool
-{
-    "Resource": "resource-name",
-    "uri": "<protocol>://<data-to-be-sent>"
-}
-```
-
 Important Notes about the JSON Format:
-
 *   The JSON object MUST be well-formed and valid.
 *   The `"tool"` or `"Resource"` field must exactly match the name listed in the `tools_description` or `resources_description`.
 *   The `"arguments"` field in the `tool` object MUST include all required arguments as defined in the `tools_description` and their corresponding values.
-*   The `"uri"` field in the `Resource` object is a Uniform Resource Identifier. The `<protocol>` can be anything appropriate (e.g., `http`, `https`, `greeting`, `data`, etc.), and `<data-to-be-sent>` represents the data you need to send to the resource.
 
-After Receiving a Tool/Resource Response (and ONLY AFTER receiving a response from the tool or resource) from the user:
+
+After Receiving a Tool Response (and ONLY AFTER receiving a response from the tool) from the user:
 1.  Process the raw data returned by the tool or resource from a user and convert it into a natural, conversational response that is easy for the user to understand.
 2.  Keep your responses concise but informative.
 3.  Use appropriate context from the user's question(i.e question that led to tool calling) to frame your response.
 4.  DO NOT SIMPLY REPEAT THE RAW JSON DATA ONCE YOU GET THE TOOL RESPONSE IN THE FORM OF "Tool execution result: meta=... content=[TextContent(type='...', text='...', annotations=...)] isError=...". Instead, focus on the most relevant information and present it in a user-friendly manner.
+5.  In Multi-tool conversations, you may need to call multiple tools in sequence. In such cases, follow the same process for each tool response, ensuring that you maintain a coherent and informative conversation with the user.  
+6.  In Multi-tool conversation, DO NOT GIVE NATURAL RESPONSESTO THE USER UNTIL YOU HAVE RECEIVED THE FINAL TOOL RESPONSE . Instead, wait for the last tool response and then provide a comprehensive answer that incorporates all relevant information from the previous tool responses Only when all calls have been done successfully.
+7.  During any tool execution, if you encounter an error, then retry the tool execution up to 2 times. If the error persists, inform the user about the issue and provide any relevant information that can help them understand the situation. Until then, do not give the natural response to the user. Instead, wait for the last tool response and then provide a comprehensive answer that incorporates all relevant information from the previous tool responses Only when all calls have been done successfully.
 
-Conversation example
+
+single Tool Conversation example:
 
 user: "Can you give me a list of all files in the C: drive?"
 assistant:```json_tool
 {
-    "Resource": "resource-name",
-    "uri": "<protocol>://<data-to-be-sent>"
+    "tool": "resource-name",
+    "arguments": {
+        "argument-name": "value"
+    }
 }
 ```
-user: Resource retrieval result: ...
+user: Tool execution result: ...
 AI: "Here is the list of files in the C: drive: ..."
+
+
+Multi-tool Conversation example:
+
+user: "Write hello world to a file named hello.txt if todays date is an odd number else write bye world."
+assistant:```json_tool
+{
+    "tool": "<tool-to check-date>",
+    "arguments": {
+        "argument-name": "value"
+    }
+}
+```
+user: Tool execution result: meta=... content=[TextContent(type='...', text='...', annotations=...)] isError=...
+assistant:```json_tool
+{
+    "tool": "<tool-to-write-file>",
+    "arguments": {
+        "argument-name": "value"
+    }
+}
+```
+user: Tool execution result: meta=... content=[TextContent(type='...', text='...', annotations=...)] isError=...
+assistant: "I have written the content to the file hello.txt."
 """
 
             from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
@@ -568,28 +587,43 @@ AI: "Here is the list of files in the C: drive: ..."
                         break
 
                     messages.append(HumanMessage(content=user_input))
-
+                    
+                    # Initial LLM response
                     llm_response = await self.llm_client.get_response(messages)
-                    # logging.info("\nAssistant: %s", llm_response)
+                    logging.info("\nAssistant: %s", llm_response)
+                    
+                    # Check if the response contains a tool call
+                    tool_pattern = r".*```json_tool\n(.*?)\n```.*"
+                    tool_match = re.match(tool_pattern, llm_response, re.DOTALL)
 
-                    result = await self.process_llm_response(llm_response)
-                    logging.info("\nAssistant_with_tools: %s", result)
-                    if result != llm_response:
-                        # messages[-1] = AIMessage(content=llm_response)
-                        messages.append(HumanMessage(content=result))
-                        # messages.append(ToolMessage(content=result,))
-                        final_response = await self.llm_client.get_response(messages)
-                        pattern = r"```.*\n(.*?)\n```"
-                        match = re.search(pattern, final_response, re.DOTALL)
-                        # logging.info("\nFinal response after: %s", final_response)
-                        # if match:
-                        #     final_response = match.group(1).strip()
-                        logging.info("\nFinal response: %s", final_response)
-                        messages.append(
-                            AIMessage(content=final_response)
-                        )
-
+                    if tool_match:
+                        # print(tool_match.group(1))
+                        # input()
+                        # Process tool execution
+                        tool_result = await self.process_llm_response(tool_match.group(1).strip('\n'))
+                        logging.info("\nTool execution result: %s", tool_result)
+                        
+                        # Add the tool result to messages
+                        messages.append(HumanMessage(content=tool_result))
+                        
+                        # Continue tool chain if needed
+                        while True:
+                            next_response = await self.llm_client.get_response(messages)
+                            logging.info("\nAssistant follow-up: %s", next_response)
+                            
+                            # Check if there's another tool call
+                            next_match = re.match(tool_pattern, next_response, re.DOTALL)
+                            if next_match:
+                                # Process another tool execution
+                                next_tool_result = await self.process_llm_response(next_match.group(1).strip('\n'))
+                                logging.info("\nTool execution result: %s", next_tool_result)
+                                messages.append(HumanMessage(content=next_tool_result)) 
+                            else:
+                                # No more tool calls, add final response to conversation
+                                messages.append(AIMessage(content=next_response))
+                                break
                     else:
+                        # No tool call, just add response to conversation
                         messages.append(AIMessage(content=llm_response))
 
                 except KeyboardInterrupt:

@@ -1,6 +1,7 @@
 from mcp.server.fastmcp import FastMCP
 import re
 import requests
+from typing import Optional, Union
 
 
 mcp = FastMCP("DemoServer") # Good practice to give it a descriptive name
@@ -15,32 +16,31 @@ def add(a: int, b: int) -> int:
     return result
 
 
-#get all files as a tree of c or d partition and tree as a string
-@mcp.resource("tree://{partition}/{depth}", name="partition_tree", description="Get all files as a tree of any given partition(c,d etc...) and tree as a string based on the depths", mime_type="text/plain")
-def get_tree(partition: str,depth: int) -> str:
-    """Get all files as a tree of c or d partition and tree as a string"""
-    print(f"Executing resource 'get_tree' with path={partition}")
-    try:
-        import os
-        tree = []
-        if not os.path.exists(partition+":"):
-            return f"Partition {partition} does not exist."
-        for root, dirs, files in os.walk(partition+":\\"):
-            level = root.replace(partition, '').count(os.sep)
-            if level > depth:
-                continue
-            indent = ' ' * 4 * (level)
-            tree.append(f"{indent}{os.path.basename(root)}/")
-            subindent = ' ' * 4 * (level + 1)
-            for f in files:
-                tree.append(f"{subindent}{f}")
-        result = "\n".join(tree)
-        print(f"Result: {result}")
-        return result
-    except Exception as e:
-        print(f"Error getting tree: {e}")
-        return str(e)
 
+@mcp.tool()
+def is_file_folder_present(file_folder_name: str, path: Optional[str] = None) -> str:
+    """parse the entire file system and check if a file or folder exists"""
+    import os
+    # if path is None or empty, set it to the list of partitions
+    if path is None:
+        partitions = [f"{chr(i)}:\\" for i in range(67, 91) if os.path.exists(f"{chr(i)}:\\")]
+        for partition in partitions:
+            path = ''.join(partition.split("\\")[:-1])
+            # return path if the file or folder is found
+            for root, dirs, files in os.walk(partition):
+                path = os.path.join(path, root.split("\\")[-1])
+                if file_folder_name.lower() in map(str.lower,dirs) or file_folder_name.lower() in map(str.lower,files):
+                    return f"{file_folder_name} found in {path}"
+    else:
+        fin_path = path
+        for root, dirs, files in os.walk(path):
+            fin_path = os.path.join(fin_path, root.split("\\")[-1])
+            if file_folder_name.lower() in map(str.lower,dirs) or file_folder_name.lower() in map(str.lower,files):
+                return f"{file_folder_name} found in {fin_path}"
+    return f"{file_folder_name} not found in {path}"
+                
+
+        
 @mcp.tool()
 def cur_time() -> str:
     """Get the current time"""
@@ -122,7 +122,21 @@ def read_file(path: str) -> str:
     except Exception as e:
         print(f"Error reading file: {e}")
         return str(e)
-
+    
+@mcp.tool()
+def write_file(path: str, content: str, binary_data: bool) -> str:
+    """Write both text and binary files"""
+    try:
+        if binary_data:
+            with open(path, 'wb') as file:
+                file.write(content.encode())
+            return f"File written to {path}"
+        else:
+            with open(path, 'w') as file:
+                file.write(content)
+            return f"File written to {path}"
+    except Exception as e:
+        return f"Error writing file: {e}"
 
 if __name__ == "__main__":
     print("Starting MCP Demo Server via stdio...")

@@ -382,7 +382,7 @@ class ChatSession:
 
         try:
             # pattern to match the JSON object given by the LLM in ```json\n<json-object>\n``` format
-            pattern = r"```json\n(.*?)\n```"
+            pattern = r"```json_tool\n(.*?)\n```"
             match = re.search(pattern, llm_response, re.DOTALL)
             if match:
                 llm_response = match.group(1).strip()
@@ -513,7 +513,7 @@ You MUST respond with the exact JSON object format below, and NOTHING ELSE, when
 
 For Tools:
 
-```json
+```json_tool
 {
     "tool": "tool-name",
     "arguments": {
@@ -524,7 +524,7 @@ For Tools:
 
 For Resources:
 
-```json
+```json_tool
 {
     "Resource": "resource-name",
     "uri": "<protocol>://<data-to-be-sent>"
@@ -547,7 +547,7 @@ After Receiving a Tool/Resource Response (and ONLY AFTER receiving a response fr
 Conversation example
 
 user: "Can you give me a list of all files in the C: drive?"
-assistant:```json
+assistant:```json_tool
 {
     "Resource": "resource-name",
     "uri": "<protocol>://<data-to-be-sent>"

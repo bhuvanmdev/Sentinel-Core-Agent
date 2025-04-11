@@ -314,7 +314,7 @@ class LLMClient:
                 azure_deployment="gpt-4o",
                 api_version=os.environ["OPENAI_API_VERSION"],
                 temperature=1,
-                max_tokens=2**9,
+                # max_tokens=2**9,
                 timeout=None,
                 max_retries=2,
                 api_key=api_key,
@@ -324,7 +324,7 @@ class LLMClient:
                 api_key = os.environ.get("GKEY",api_key)
                 from langchain_google_genai import ChatGoogleGenerativeAI
                 self.llm = ChatGoogleGenerativeAI(
-                    model="Gemini-2.0-Flash",
+                    model="gemini-2.0-flash",
                     google_api_key=api_key,
                     temperature=0.5,
                     max_tokens=None,
@@ -504,9 +504,7 @@ class ChatSession:
 # """
 
             system_message = f"""
-You are a helpful assistant with access to tools and resources. Your primary goal is to assist the user by answering their questions or completing their requests.  You MUST prioritize using available tools and resources before attempting to answer directly.
-
-Tools:
+You are a helpful assistant with access to tools. Your primary goal is to assist the user by answering their questions or completing their requests.  You MUST prioritize using available tools and resources before attempting to answer directly.
 
 Tools:
 {tools_description}
@@ -523,21 +521,21 @@ For Tools, ALWAYS use the following format:
 ```
 Important Notes about the JSON Format:
 *   The JSON object MUST be well-formed and valid.
-*   The `"tool"` or `"Resource"` field must exactly match the name listed in the `tools_description` or `resources_description`.
+*   The `"tool"` field must exactly match the name listed in the `tools_description`.
 *   The `"arguments"` field in the `tool` object MUST include all required arguments as defined in the `tools_description` and their corresponding values.
 
 
 After Receiving a Tool Response (and ONLY AFTER receiving a response from the tool) from the user:
-1.  Process the raw data returned by the tool or resource from a user and convert it into a natural, conversational response that is easy for the user to understand.
-2.  Keep your responses concise but informative.
-3.  Use appropriate context from the user's question(i.e question that led to tool calling) to frame your response.
-4.  DO NOT SIMPLY REPEAT THE RAW JSON DATA ONCE YOU GET THE TOOL RESPONSE IN THE FORM OF "Tool execution result: meta=... content=[TextContent(type='...', text='...', annotations=...)] isError=...". Instead, focus on the most relevant information and present it in a user-friendly manner.
-5.  In Multi-tool conversations, you may need to call multiple tools in sequence. In such cases, follow the same process for each tool response, ensuring that you maintain a coherent and informative conversation with the user.  
-6.  In Multi-tool conversation, DO NOT GIVE NATURAL RESPONSESTO THE USER UNTIL YOU HAVE RECEIVED THE FINAL TOOL RESPONSE . Instead, wait for the last tool response and then provide a comprehensive answer that incorporates all relevant information from the previous tool responses Only when all calls have been done successfully.
-7.  During any tool execution, if you encounter an error, then retry the tool execution up to 2 times. If the error persists, inform the user about the issue and provide any relevant information that can help them understand the situation. Until then, do not give the natural response to the user. Instead, wait for the last tool response and then provide a comprehensive answer that incorporates all relevant information from the previous tool responses Only when all calls have been done successfully.
+1.  When a task requires the execution of multiple tools sequentially, then execute each tool in order and obtain the tool response from the user and continue next tool use and again obtain the tool response from the user and continue this process, until all tools are executed as planed. During this process, do not summarize or provide any user friendly responses whatsoever. And only when all tools are executed as planned and the final answer is present, then take the final answer from current and early conversations, give a user-friendly explanation of the task being completed.
+2.  During any tool execution, if you encounter an error, then RETRY the tool execution up to 2 times. If the error persists, inform the user about the issue and provide any relevant information that can help them understand the situation. Until then, do not give the natural response to the user. Instead, wait for the last tool response and then provide a comprehensive answer that incorporates all relevant information from the previous tool responses Only when all calls have been done successfully.
+3.  Process the raw data returned by the tool or resource from a user and convert it into a natural, conversational response that is easy for the user to understand.
+4.  Keep your responses concise but informative.
+5.  Use appropriate context from the user's question(i.e question that led to tool calling) to frame your response.
+6.  DO NOT SIMPLY REPEAT THE RAW JSON DATA ONCE YOU GET THE TOOL RESPONSE IN THE FORM OF "Tool execution result: meta=... content=[TextContent(type='...', text='...', annotations=...)] isError=...". Instead, focus on the most relevant information and present it in a user-friendly manner assuming it's a single tool conversation.
 
+Examples:
 
-single Tool Conversation example:
+1) single Tool Conversation example:
 
 user: "Can you give me a list of all files in the C: drive?"
 assistant:```json_tool
@@ -552,7 +550,7 @@ user: Tool execution result: ...
 AI: "Here is the list of files in the C: drive: ..."
 
 
-Multi-tool Conversation example:
+2) Multi-tool Conversation example:
 
 user: "Write hello world to a file named hello.txt if todays date is an odd number else write bye world."
 assistant:```json_tool

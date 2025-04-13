@@ -2,19 +2,12 @@ from mcp.server.fastmcp import FastMCP
 import re
 import requests
 from typing import Optional, Union
-
+import asyncio
+from crawl4ai import *
+import sys
+sys.stdout.reconfigure(encoding='utf-8')
 
 mcp = FastMCP("Python Tools server") # Good practice to give it a descriptive name
-
-# Add an addition tool
-@mcp.tool()
-def add(a: int, b: int) -> int:
-    """Add two numbers"""
-    print(f"Executing tool 'add' with a={a}, b={b}") # Add logging/print for debugging
-    result = a + b
-    print(f"Result: {result}")
-    return result
-
 
 
 @mcp.tool()
@@ -138,8 +131,28 @@ def write_file(path: str, content: str, binary_data: bool) -> str:
         return f"Error writing file: {e}"
 
 
+async def web_page_scrapper(url: str) -> str:
+    """Scrapes a webpage and return the content in markdown."""
+    print(f"Executing resource 'web_page_scrapper' with url={url}")
+    try:
+        async with AsyncWebCrawler(
+            launch_options={
+                "headless": True,
+                "args": ["--no-sandbox", "--disable-setuid-sandbox"]
+            },
+            thread_safe=True
+        ) as crawler:
+            result = await crawler.arun(
+                url=url,
+            )
+
+        return f"The scrapped content is given below \n{str(result.markdown,encoding='utf-8')}"
+    except Exception as e:
+        print(f"Error scraping page: {e}")
+        return str(e)
+
 
 if __name__ == "__main__":
-    print("Starting MCP Demo Server via stdio...")
+    print("Starting MCP Server via stdio...")
     mcp.run(transport="stdio") # This starts the MCP server loop
     print("MCP Demo Server stopped.")

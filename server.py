@@ -6,7 +6,10 @@ import asyncio
 import sys
 from contextlib import asynccontextmanager
 from crawl4ai import *
-from time import sleep
+from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.vectorstores import Chroma
+from langchain.vectorstores import Chroma
+from langchain.text_splitter import MarkdownHeaderTextSplitter
 
 crawler = None
 
@@ -24,9 +27,18 @@ async def lifespan(app: FastMCP):
 sys.stdout.reconfigure(encoding='utf-8')
 
 import logging
-
-
 log = logging.getLogger("mcp")
+
+log.info("Getting the embedding model...")
+
+embed_model = HuggingFaceEmbeddings(
+
+    model_name=  "intfloat/e5-large-v2",#"NovaSearch/stella_en_1.5B_v5"  , #"nvidia/NV-Embed-v2",  #
+    model_kwargs={"trust_remote_code":True,'device': 'cuda',#"model_kwargs":{"device_map": "auto" if torch.cuda.is_available() else 'cpu',}
+},
+    encode_kwargs={'normalize_embeddings': True}
+)
+
 mcp = FastMCP(name="Python Tools server",lifespan=lifespan)
 
 
@@ -117,7 +129,7 @@ def braveai(query,temp=False,hash_=None,id_=None,ind=1):
 
 @mcp.tool()
 def browser_ai_search(query: str) -> str:
-    """Search any query and obtain a response from another AI agent connected to the internet."""
+    """Search any query and obtain a response from another AI agent connected to the internet. The AI agent is good at searching the web and providing answers. It is not a general purpose AI agent. It is a search engine AI agent."""
     hash_,id_ = braveai(".",temp=True)
     return braveai(query,temp=False,hash_=hash_,id_=id_)
 
@@ -153,19 +165,66 @@ def write_file(path: str, content: str, binary_data: bool) -> str:
 
 
 @mcp.tool()
-async def web_page_scrapper(url: str) -> str:
-    """Scrapes a webpage and return the content in markdown."""
+async def web_page_scrapper(url: str, Index: Optional[bool] = False, Index_name: Optional[str] = None) -> str:
+    """Scrapes a webpage and return the content in markdown. FYI, bool here refers to python boolean(i.e True or False)."""
     print(f"Executing resource 'web_page_scrapper' with url={url}")
     try:
-        # wait for 10 seconds before scraping the page  
         config = CrawlerRunConfig(wait_until="js:() => window.loaded === true",page_timeout=30)
         res = await crawler.arun(url=url,config=config)
+        res_mark = res.markdown
+        if Index:
+            if Index_name is None:
+                return "Index name is required."
+            try:
+                # Create a text splitter to split the content into chunks
+                # text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+                text_splitter = MarkdownHeaderTextSplitter([
+                                                            ("#", "Header 1"),
+                                                            ("##", "Header 2"),
+                                                            ("###", "Header 3"),
+                                                        ], strip_headers=False)
+                
+                # Split the content into chunks
+                docs = text_splitter.create_documents([res_mark])
+                
+                # Create a Chroma vector store and persist it to disk
+                vectordb = Chroma.from_documents(docs, embed_model, collection_name=Index_name, persist_directory="Indexes")
+                vectordb.persist()
+                
+                return f"Indexed content saved to {Index_name}"
+            except Exception as e:
+                print(f"Error indexing content: {e}")
+                return str(e)
         return str(res.markdown) + "\n\n\n\n" + "All available links in the website:\n" + str(res.links)
     except Exception as e:
         print(f"Error scraping page: {e}")
         return str(e)
 
 
+
+@mcp.tool()
+def get_all_vector_indexes() -> str:
+    """Get all the vector embedding indexes in the current directory."""
+    import os
+    indexes = []
+    for root, dirs, files in os.walk(os.getcwd()):
+        for dir in dirs:
+            if dir.startswith("Indexs"):
+                indexes.append(dir)
+    return "\n".join(indexes) if indexes else "No indexes found."
+
+@mcp.tool()
+def search_via_index(query: str, index_name: str) -> str:
+    """Search a query via a vector embedding index."""
+
+    # Load the vector store from disk
+    vectordb = Chroma(persist_directory="Indexes", collection_name=index_name, embedding_function=embed_model)
+    
+    # Perform the search
+    results = vectordb.similarity_search(query, k=5)
+    
+    # Format the results as a string
+    return "\n".join([str(result.page_content) for result in results]) if results else "No results found."
 
 
 if __name__ == "__main__":

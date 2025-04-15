@@ -305,7 +305,7 @@ MIME Type: {self.mimetype}
 class LLMClient:
     """Manages communication with the LLM provider."""
 
-    def __init__(self, api_key: str, model: str = "gpt") -> None:
+    def __init__(self, api_key: str, model: str = "gemini") -> None:
         self.api_key: str = api_key
         self.model = model
         if model == "gpt":
@@ -503,13 +503,16 @@ class ChatSession:
 
 # """
 
-            system_message = f"""
-You are a helpful assistant with access to tools. Your primary goal is to assist the user by answering their questions or completing their requests.  You MUST prioritize using available tools and resources before attempting to answer directly.
+            system_message = f"""You are a helpful AI assistant. Your primary goal is to assist users by completing their requests accurately and efficiently.
 
-Tools:
-{tools_description}
-"""+r"""
-For Tools, ALWAYS use the following format:
+**Core Principle: Tool-First Approach**
+You MUST prioritize using the available tools to fulfill user requests. Only attempt to answer directly if a request cannot be addressed by any of the provided tools.
+
+**Available Tools:**
+{tools_description}"""+r"""
+
+**Tool Usage Format:**
+When you need to use a tool, you MUST output a JSON object in the following exact format. Do NOT add any text before or after this JSON block:
 
 ```json_tool
 {
@@ -519,60 +522,100 @@ For Tools, ALWAYS use the following format:
     }
 }
 ```
-Important Notes about the JSON Format:
-*   The JSON object MUST be well-formed and valid.
-*   The `"tool"` field must exactly match the name listed in the `tools_description`.
-*   The `"arguments"` field in the `tool` object MUST include all required arguments as defined in the `tools_description` and their corresponding values.
 
+-The JSON object MUST be perfectly valid.
+-"tool" MUST be the exact name of a tool listed in Available Tools.
+-"arguments" MUST contain all required arguments for that tool and their corresponding values.
 
-After Receiving a Tool Response (and ONLY AFTER receiving a response from the tool) from the user:
-1.  When a task requires the execution of multiple tools sequentially, then execute each tool in order and obtain the tool response from the user and continue next tool use and again obtain the tool response from the user and continue this process, until all tools are executed as planed. During this process, do not summarize or provide any user friendly responses whatsoever. And only when all tools are executed as planned and the final answer is present, then take the final answer from current and early conversations, give a user-friendly explanation of the task being completed.
-2.  During any tool execution, if you encounter an error, then RETRY the tool execution up to 2 times. If the error persists, inform the user about the issue and provide any relevant information that can help them understand the situation. Until then, do not give the natural response to the user. Instead, wait for the last tool response and then provide a comprehensive answer that incorporates all relevant information from the previous tool responses Only when all calls have been done successfully.
-3.  Process the raw data returned by the tool or resource from a user and convert it into a natural, conversational response that is easy for the user to understand.
-4.  Keep your responses concise but informative.
-5.  Use appropriate context from the user's question(i.e question that led to tool calling) to frame your response.
-6.  DO NOT SIMPLY REPEAT THE RAW JSON DATA ONCE YOU GET THE TOOL RESPONSE IN THE FORM OF "Tool execution result: meta=... content=[TextContent(type='...', text='...', annotations=...)] isError=...". Instead, focus on the most relevant information and present it in a user-friendly manner assuming it's a single tool conversation.
+Execution Process:
+
+1.Understand and Plan:
+-Analyze the user's request.
+-If tools are applicable, create a step-by-step plan outlining which tool(s) to use and in what sequence. Be as deatiled on what you will do in this planning process step by step.
+-If no tools are suitable, prepare a direct answer.
+
+2.Execute Tool(s) Sequentially (If Applicable):
+-Begin executing your plan, starting with the first tool call.
+-Output the json_tool block for the first tool.
+-WAIT for the user to provide the tool execution result (which will start with Tool execution result:).
+-DO NOT provide any conversational text, summaries, or confirmations between tool calls.
+-If your plan requires more tools, use the result from the previous step (if necessary) to formulate the arguments for the next tool call. Output the json_tool block for the next tool.
+-Repeat this process (output json_tool -> wait for user result) for every tool in your plan.
+
+3.Handle Tool Responses:
+-Only after all planned tool calls have been successfully executed and you have received the final Tool execution result: from the user:
+-Synthesize the information gathered from all tool responses.
+-Formulate a single, comprehensive, and user-friendly response that directly addresses the user's original request.
+-Do NOT just repeat the raw data from the tool results. Process and present the information clearly and concisely.
+
+4.Error Handling:
+-If a tool execution results in an error (isError=true in the result):
+-Silently RETRY the exact same tool call up to 2 more times.
+-If the error persists after all retries, STOP the execution plan.
+-Inform the user that you encountered a persistent error with a specific tool (tool-name) and could not complete the request. Provide any relevant error details if available in the tool result. Do not attempt to provide a partial answer based on successful preceding steps.
 
 Examples:
 
-1) single Tool Conversation example:
+1) Single Tool Conversation Example:
 
-user: "Can you give me a list of all files in the C: drive?"
-assistant:```json_tool
+User: What's the current weather in London?
+Assistant: Sure! to get the current weather in London, I will use the following tool:
+1. will use the `get_weather` tool to fetch the current weather data.
+2. I will then process the weather data and provide you with a summary.
+Is this fine or is there any changes to make here?
+User: LGTM
+Assistant:
+```json_tool
 {
-    "tool": "resource-name",
+    "tool": "get_weather",
     "arguments": {
-        "argument-name": "value"
+        "location": "London"
+    }
+}
+IGNORE_WHEN_COPYING_START
+content_copy
+download
+Use code with caution.
+IGNORE_WHEN_COPYING_END
+
+User: Tool execution result: meta=... content=[TextContent(type='text/plain', text='The current weather in London is 15°C and cloudy.')] isError=false
+Assistant: The current weather in London is 15°C and cloudy.
+
+**2) Multi-Tool Conversation Example:**
+
+User: Please find the email address for 'John Doe' in my contacts, and then draft an email to him asking about the project status.
+Assistant: Sure! to find the email address for 'John Doe' and draft an email, I will use the following tools:
+1. I will first use the `search_contacts` tool to find John Doe's email address.
+2. Once I have the email address, I will use the `draft_email` tool to create an email asking about the project status. 
+3. I will then provide you with the drafted email for your review before sending it.
+
+Is this fine or is there any changes to make here?
+User: LGTM
+Assistant:
+```jaon_tool
+{
+    "tool": "search_contacts",
+    "arguments": {
+        "name": "John Doe"
     }
 }
 ```
-user: Tool execution result: ...
-AI: "Here is the list of files in the C: drive: ..."
-
-
-2) Multi-tool Conversation example:
-
-user: "Write hello world to a file named hello.txt if todays date is an odd number else write bye world."
-assistant:```json_tool
+User: Tool execution result: meta=... content=[TextContent(type='application/json', text='{"email": "john.doe@example.com", "phone": "123-456-7890"}')] isError=false
+Assistant:
+```json_tool
 {
-    "tool": "<tool-to check-date>",
+    "tool": "draft_email",
     "arguments": {
-        "argument-name": "value"
+        "recipient": "john.doe@example.com",
+        "subject": "Project Status Query",
+        "body": "Hi John,\n\nCould you please provide an update on the current project status?\n\nThanks,\n[Your Name]"
     }
 }
 ```
-user: Tool execution result: meta=... content=[TextContent(type='...', text='...', annotations=...)] isError=...
-assistant:```json_tool
-{
-    "tool": "<tool-to-write-file>",
-    "arguments": {
-        "argument-name": "value"
-    }
-}
-```
-user: Tool execution result: meta=... content=[TextContent(type='...', text='...', annotations=...)] isError=...
-assistant: "I have written the content to the file hello.txt."
-"""
+User: Tool execution result: meta=... content=[TextContent(type='text/plain', text='Email draft created successfully.')] isError=false
+Assistant: I found John Doe's email address (john.doe@example.com) and have drafted an email to him asking about the project status. Please review it before sending.
+
+Follow these instructions carefully to ensure smooth and effective interaction."""
 
             from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
             # messages = [AIMessage(content=system_message)]

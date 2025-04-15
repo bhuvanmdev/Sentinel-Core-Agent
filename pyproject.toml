@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "crawl4ai>=0.5.0.post8",
     "langchain-openai>=0.3.12",
     "mcp>=1.6.0",
     "pip>=25.0.1",

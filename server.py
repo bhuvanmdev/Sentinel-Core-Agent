@@ -8,9 +8,18 @@ from contextlib import asynccontextmanager
 from crawl4ai import *
 from langchain.embeddings import HuggingFaceEmbeddings
 from langchain.vectorstores import Chroma
-from langchain.vectorstores import Chroma
 from langchain.text_splitter import MarkdownHeaderTextSplitter
+from webagent import WebResearchAgent
 
+import argparse
+
+parser = argparse.ArgumentParser(description="MCP Server")
+parser.add_argument("--port", type=int, default=5000, help="Port to run the server on")
+parser.add_argument("--host", type=str, default="localhost", help="Host to run the server on")
+parser.add_argument("--use-hf", action="store_true", help="Use Hugging Face model",default=False)
+
+
+args = parser.parse_args()
 crawler = None
 
 @asynccontextmanager
@@ -30,14 +39,14 @@ import logging
 log = logging.getLogger("mcp")
 
 log.info("Getting the embedding model...")
+if args.use_hf:
+    embed_model = HuggingFaceEmbeddings(
 
-embed_model = HuggingFaceEmbeddings(
-
-    model_name=  "intfloat/e5-large-v2",#"NovaSearch/stella_en_1.5B_v5"  , #"nvidia/NV-Embed-v2",  #
-    model_kwargs={"trust_remote_code":True,'device': 'cuda',#"model_kwargs":{"device_map": "auto" if torch.cuda.is_available() else 'cpu',}
-},
-    encode_kwargs={'normalize_embeddings': True}
-)
+        model_name=  "intfloat/e5-large-v2",#"NovaSearch/stella_en_1.5B_v5"  , #"nvidia/NV-Embed-v2",  #
+        model_kwargs={"trust_remote_code":True,'device': 'cuda',#"model_kwargs":{"device_map": "auto" if torch.cuda.is_available() else 'cpu',}
+    },
+        encode_kwargs={'normalize_embeddings': True}
+    )
 
 mcp = FastMCP(name="Python Tools server",lifespan=lifespan)
 
@@ -118,7 +127,7 @@ def braveai(query,temp=False,hash_=None,id_=None,ind=1):
         return hash_,id_
     else:
         ini = query
-        inp = "From this point onwards answer all the questions asked only in markup format. This includes bold, newline and links. Ignore all other stylings and no json formatting allowed.\n\n   " + query 
+        inp = "From this point onwards answer all the questions asked, only in markup format. This includes bold, newline and links. Ignore all other stylings and no json formatting allowed.\n\n   " + query 
         ini = ''.join([url_encoding.get(x, x) for x in ini])
         url = r"https://search.brave.com/api/chatllm/conversation?key=%7B%22query%22%3A%22"+ini+r"%22%2C%22country%22%3A%22us%22%2C%22language%22%3A%22en%22%2C%22safesearch%22%3A%22moderate%22%2C%22results_hash%22%3A%22"+hash_+r"%22%7D&conversation="+id_+r"&index="+str(ind)+r"&followup="+inp
         response = requests.get(url, headers=headers)
@@ -127,11 +136,11 @@ def braveai(query,temp=False,hash_=None,id_=None,ind=1):
             output += x.strip('"')
         return output.replace('\\n','\n').replace('\\','')
 
-@mcp.tool()
-def browser_ai_search(query: str) -> str:
-    """Search any query and obtain a response from another AI agent connected to the internet. The AI agent is good at searching the web and providing answers. It is not a general purpose AI agent. It is a search engine AI agent."""
-    hash_,id_ = braveai(".",temp=True)
-    return braveai(query,temp=False,hash_=hash_,id_=id_)
+# @mcp.tool()
+# def general_url_info_provider(query: str) -> str:
+#     """Providex you the general fotmat the url is supposed to be but not the specific url. If any specific url is asked, they will start hallucinating."""
+#     hash_,id_ = braveai(query,temp=True)
+#     return braveai(query,temp=False,hash_=hash_,id_=id_)
 
 
 @mcp.tool()
@@ -164,42 +173,52 @@ def write_file(path: str, content: str, binary_data: bool) -> str:
 
 
 
-@mcp.tool()
-async def web_page_scrapper(url: str, Index: Optional[bool] = False, Index_name: Optional[str] = None) -> str:
+# @mcp.tool()
+async def web_page_scrapper(url: str) -> str:
     """Scrapes a webpage and return the content in markdown. FYI, bool here refers to python boolean(i.e True or False)."""
     print(f"Executing resource 'web_page_scrapper' with url={url}")
     try:
-        config = CrawlerRunConfig(wait_until="js:() => window.loaded === true",page_timeout=30)
-        res = await crawler.arun(url=url,config=config)
-        res_mark = res.markdown
-        if Index:
-            if Index_name is None:
-                return "Index name is required."
-            try:
-                # Create a text splitter to split the content into chunks
-                # text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-                text_splitter = MarkdownHeaderTextSplitter([
-                                                            ("#", "Header 1"),
-                                                            ("##", "Header 2"),
-                                                            ("###", "Header 3"),
-                                                        ], strip_headers=False)
+        # config = CrawlerRunConfig(wait_until="js:() => window.loaded === true")
+        res = await crawler.arun(url=url)#),config=config)
+        # if Index:
+        #     if Index_name is None:
+        #         return "Index name is required."
+        #     try:
+        #         # Create a text splitter to split the content into chunks
+        #         # text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+        #         text_splitter = MarkdownHeaderTextSplitter([
+        #                                                     ("#", "Header 1"),
+        #                                                     ("##", "Header 2"),
+        #                                                     ("###", "Header 3"),
+        #                                                 ], strip_headers=False)
                 
-                # Split the content into chunks
-                docs = text_splitter.create_documents([res_mark])
+        #         # Split the content into chunks
+        #         docs = text_splitter.create_documents([res_mark])
                 
-                # Create a Chroma vector store and persist it to disk
-                vectordb = Chroma.from_documents(docs, embed_model, collection_name=Index_name, persist_directory="Indexes")
-                vectordb.persist()
+        #         # Create a Chroma vector store and persist it to disk
+        #         vectordb = Chroma.from_documents(docs, embed_model, collection_name=Index_name, persist_directory="Indexes")
+        #         vectordb.persist()
                 
-                return f"Indexed content saved to {Index_name}"
-            except Exception as e:
-                print(f"Error indexing content: {e}")
-                return str(e)
-        return str(res.markdown) + "\n\n\n\n" + "All available links in the website:\n" + str(res.links)
+        #         return f"Indexed content saved to {Index_name}"
+        #     except Exception as e:
+        #         print(f"Error indexing content: {e}")
+        #         return str(e)
+        return str(res.cleaned_html) #+ "\n\n\n\n" + "All available links in the website:\n" + str(res.links)
     except Exception as e:
         print(f"Error scraping page: {e}")
         return str(e)
 
+@mcp.tool()
+async def deep_research(query: str, max_results: int = 5, depth: int = 1) -> str:
+    """Perform a deep research online, on a query and return the results."""
+    print(f"Executing resource 'deep_research' with query={query}, max_results={max_results}, depth={depth}")
+    try:
+        agent = WebResearchAgent(crawler,max_iterations=max_results, max_scrape_urls_per_iteration=depth, logger=log)
+        results = await agent.run_research(query, max_results=max_results, depth=depth)
+        return str(results)
+    except Exception as e:
+        print(f"Error performing deep research: {e}")
+        return str(e)
 
 
 @mcp.tool()
@@ -225,6 +244,7 @@ def search_via_index(query: str, index_name: str) -> str:
     
     # Format the results as a string
     return "\n".join([str(result.page_content) for result in results]) if results else "No results found."
+
 
 
 if __name__ == "__main__":

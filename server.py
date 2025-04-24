@@ -172,7 +172,7 @@ def write_file(path: str, content: str, binary_data: bool) -> str:
         return f"Error writing file: {e}"
 
 
-
+# TODO: Integrate this with plane scraper to locally index commonly used documentation and web pages.
 # @mcp.tool()
 async def web_page_scrapper(url: str) -> str:
     """Scrapes a webpage and return the content in markdown. FYI, bool here refers to python boolean(i.e True or False)."""
@@ -214,7 +214,7 @@ async def deep_research(query: str, max_results: int = 5, depth: int = 1) -> str
     print(f"Executing resource 'deep_research' with query={query}, max_results={max_results}, depth={depth}")
     try:
         agent = WebResearchAgent(crawler,max_iterations=max_results, max_scrape_urls_per_iteration=depth, logger=log)
-        results = await agent.run_research(query, max_results=max_results, depth=depth)
+        results = await agent.run_research(query)
         return str(results)
     except Exception as e:
         print(f"Error performing deep research: {e}")

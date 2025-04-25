@@ -1,4 +1,4 @@
-# This section was written completely by using the SentinelCore agent and its tools via gemini 2.0 flash.
+# This section was written completely by using the SentinelCore agent and its tools(prompt->get the details from internet->write it to a file) via gemini 2.0 flash.
 
 ```
 USER-PROMPT:-Now first search for a github account named bhuvanmdev and scrape his fontpage and search for a repo that has something to do with MCP application. Then go to that repository and and scrape the client.py and server.py file contents and create a neat summary of it and write it to readme.md file in the current dir.
